@@ -5197,6 +5197,11 @@ static const char _data_FX_MODE_FIRE_2025[] PROGMEM = "Fire 2025@Cooling,Spark r
 // YouTube: https://www.youtube.com/@MadeWithLight //
 /////////////////////////////////////////////////////
 
+// --- Configuration Section ---
+constexpr float FADE_ZONE_START_RATIO = 0.8f;  // Start fade at 80% height (0.0 - 1.0)
+constexpr float FADE_FACTOR = 0.85f;           // Fade strength (0.0 = no fade, 1.0 = full fade)
+// -----------------------------
+
 uint16_t mode_fire_2025_sr() {
   const uint8_t width = SEGMENT.virtualWidth();
   const uint8_t height = SEGMENT.virtualHeight();
@@ -5233,10 +5238,9 @@ uint16_t mode_fire_2025_sr() {
       int16_t transfer = below - decay;
       if (transfer < 0) transfer = 0;
 
-      // Suggested: Apply gradual fade at top based on height
-      const float fadeFactor = 0.85f;  // 0.0 = no fade, 1.0 = max fade
-      if (y > height * 0.7) {  // Start fading in upper 30% of flame
-        float fadeMultiplier = 1.0f - (fadeFactor * (float)(y - height * 0.7) / (height * 0.3));
+      // Suggested: Apply gradual fade at top based on height using config constants
+      if (y > height * FADE_ZONE_START_RATIO) {  // Start fading in upper zone
+        float fadeMultiplier = 1.0f - (FADE_FACTOR * (float)(y - height * FADE_ZONE_START_RATIO) / (height * (1.0f - FADE_ZONE_START_RATIO)));
         transfer = (int16_t)(transfer * fadeMultiplier);
         if (transfer < 0) transfer = 0;
       }
@@ -5292,38 +5296,38 @@ uint16_t mode_fire_2025_sr() {
   // --- Render flames Start ---
   uint8_t staggerBlend = 160;  // 0 = no stagger correction, 255 = full blend
 
-for (uint8_t y = 0; y < height; y++) {
-  bool stagger = (y % 2 == 1);  // every other row is offset
+  for (uint8_t y = 0; y < height; y++) {
+    bool stagger = (y % 2 == 1);  // every other row is offset
 
-  for (uint8_t x = 0; x < width; x++) {
-    uint8_t e = energy[x][y];
-    uint8_t brightness = scale8(e, 255);
+    for (uint8_t x = 0; x < width; x++) {
+      uint8_t e = energy[x][y];
+      uint8_t brightness = scale8(e, 255);
 
-    uint32_t color;
-    if (e > 250) {
-      color = RGBW32(170, 170, e, 0);  // white-hot tip
-    } else if (e > 0) {
-      color = SEGMENT.color_from_palette(e, false, false, 0, brightness);
-    } else {
-      color = RGBW32(0, 0, 0, 0); // fully off
-    }
+      uint32_t color;
+      if (e > 250) {
+        color = RGBW32(170, 170, e, 0);  // white-hot tip
+      } else if (e > 0) {
+        color = SEGMENT.color_from_palette(e, false, false, 0, brightness);
+      } else {
+        color = RGBW32(0, 0, 0, 0); // fully off
+      }
 
-    if (stagger && staggerBlend > 0) {
-      uint8_t left = (x > 0) ? x - 1 : x;
-      uint8_t right = (x < width - 1) ? x + 1 : x;
+      if (stagger && staggerBlend > 0) {
+        uint8_t left = (x > 0) ? x - 1 : x;
+        uint8_t right = (x < width - 1) ? x + 1 : x;
 
-      // blend with left/right using staggerBlend strength
-      uint32_t blended = color_blend(
-        color_blend(SEGMENT.getPixelColorXY(left, y), color, staggerBlend),
-        SEGMENT.getPixelColorXY(right, y), staggerBlend
-      );
+        // blend with left/right using staggerBlend strength
+        uint32_t blended = color_blend(
+          color_blend(SEGMENT.getPixelColorXY(left, y), color, staggerBlend),
+          SEGMENT.getPixelColorXY(right, y), staggerBlend
+        );
 
-      SEGMENT.setPixelColorXY(x, y, blended);
-    } else {
-      SEGMENT.setPixelColorXY(x, y, color);
+        SEGMENT.setPixelColorXY(x, y, blended);
+      } else {
+        SEGMENT.setPixelColorXY(x, y, color);
+      }
     }
   }
-}
   // --- Render flames End ---
 
   return FRAMETIME;
@@ -5333,6 +5337,7 @@ for (uint8_t y = 0; y < height; y++) {
 static const char _data_FX_MODE_FIRE_2025_SR[] PROGMEM =
 "Fire2025 SR@Cooling,Spark rate,Stagger Blend,,2D Blur;;!;1;";
 // --- Effect registration End ---
+
 
 //////////////////////////
 //     2D Firenoise     //
