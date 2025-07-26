@@ -5205,21 +5205,23 @@ uint16_t mode_fire_2025_sr() {
   static uint8_t next[64][64] = {};
   static uint8_t baseMemory[64] = {};  // Smoothed base energy
 
-  // --- Audio input ---
+  // --- Audio input Start ---
   float audioVolume = 0.0f;
   um_data_t* audioData = getAudioData();
   if (audioData && audioData->u_size > 0 && audioData->u_data[0] != nullptr) {
     audioVolume = *(float*)(audioData->u_data[0]);  // smoothed volume
   }
+  // --- Audio input End ---
 
-  // --- Clear next buffer ---
+  // --- Clear next buffer Start ---
   for (uint8_t x = 0; x < width; x++) {
     for (uint8_t y = 0; y < height; y++) {
       next[x][y] = 0;
     }
   }
+  // --- Clear next buffer End ---
 
-  // --- Energy transfer: upward + lateral with flicker + taper ---
+  // --- Energy transfer Start ---
   for (uint8_t y = 1; y < height; y++) {
     for (uint8_t x = 0; x < width; x++) {
       uint8_t below = energy[x][y - 1];
@@ -5230,9 +5232,18 @@ uint16_t mode_fire_2025_sr() {
 
       int16_t transfer = below - decay;
       if (transfer < 0) transfer = 0;
+
+      // Suggested: Apply gradual fade at top based on height
+      const float fadeFactor = 0.85f;  // 0.0 = no fade, 1.0 = max fade
+      if (y > height * 0.7) {  // Start fading in upper 30% of flame
+        float fadeMultiplier = 1.0f - (fadeFactor * (float)(y - height * 0.7) / (height * 0.3));
+        transfer = (int16_t)(transfer * fadeMultiplier);
+        if (transfer < 0) transfer = 0;
+      }
+
       next[x][y] = transfer;
 
-      // --- Lateral flickering tongues with tapering ---
+      // --- Lateral flickering tongues with tapering Start ---
       uint8_t taper = map8(height - y, 0, 255); // more spread at bottom
       uint8_t sideEnergy = (transfer * taper) / 1024;
 
@@ -5246,57 +5257,82 @@ uint16_t mode_fire_2025_sr() {
       if (rightX >= 0 && rightX < width) {
         next[rightX][y] = max(next[rightX][y], (uint8_t)sideEnergy);
       }
+      // --- Lateral flickering tongues with tapering End ---
     }
   }
+  // --- Energy transfer End ---
 
-  // --- Inject base sparks (audio driven, smoothed) ---
+  // --- Inject base sparks Start ---
   for (uint8_t x = 0; x < width; x++) {
-  uint8_t base = 0;
+    uint8_t base = 0;
 
-  if (audioVolume > 0.02f && random8() < 120) {
-    base = random8(80, 150) + (uint8_t)(audioVolume * 255);
-    base = min(base, (uint8_t)255);
-  } else {
-    base = random8(10, 30);  // Ember glow when silent
+    if (audioVolume > 0.02f && random8() < 120) {
+      base = random8(80, 150) + (uint8_t)(audioVolume * 255);
+      base = min(base, (uint8_t)255);
+    } else {
+      base = random8(10, 30);  // Ember glow when silent
+    }
+
+    // Smooth base flicker (optional)
+    base = (base + baseMemory[x]) / 2;
+    baseMemory[x] = base;
+
+    next[x][0] = base;
   }
+  // --- Inject base sparks End ---
 
-  // Smooth base flicker (optional)
-  static uint8_t baseMemory[64] = {};
-  base = (base + baseMemory[x]) / 2;
-  baseMemory[x] = base;
-
-  next[x][0] = base;
-}
-
-  // --- Copy next → energy ---
+  // --- Copy next to energy Start ---
   for (uint8_t x = 0; x < width; x++) {
     for (uint8_t y = 0; y < height; y++) {
       energy[x][y] = next[x][y];
     }
   }
+  // --- Copy next to energy End ---
 
-  // --- Render flames ---
-  for (uint8_t y = 0; y < height; y++) {
-    for (uint8_t x = 0; x < width; x++) {
-      uint8_t e = energy[x][y];
-      uint8_t brightness = scale8(e, 255);
+  // --- Render flames Start ---
+  uint8_t staggerBlend = 160;  // 0 = no stagger correction, 255 = full blend
 
-      if (e > 250) {
-        SEGMENT.setPixelColorXY(x, y, RGBW32(170, 170, e, 0));  // white-hot tip
-      } else if (e > 0) {
-        uint32_t color = SEGMENT.color_from_palette(e, false, false, 0, brightness);
-        SEGMENT.setPixelColorXY(x, y, color);
-      } else {
-        SEGMENT.setPixelColorXY(x, y, RGBW32(0, 0, 0, 0));  // fully off
-      }
+for (uint8_t y = 0; y < height; y++) {
+  bool stagger = (y % 2 == 1);  // every other row is offset
+
+  for (uint8_t x = 0; x < width; x++) {
+    uint8_t e = energy[x][y];
+    uint8_t brightness = scale8(e, 255);
+
+    uint32_t color;
+    if (e > 250) {
+      color = RGBW32(170, 170, e, 0);  // white-hot tip
+    } else if (e > 0) {
+      color = SEGMENT.color_from_palette(e, false, false, 0, brightness);
+    } else {
+      color = RGBW32(0, 0, 0, 0); // fully off
+    }
+
+    if (stagger && staggerBlend > 0) {
+      uint8_t left = (x > 0) ? x - 1 : x;
+      uint8_t right = (x < width - 1) ? x + 1 : x;
+
+      // blend with left/right using staggerBlend strength
+      uint32_t blended = color_blend(
+        color_blend(SEGMENT.getPixelColorXY(left, y), color, staggerBlend),
+        SEGMENT.getPixelColorXY(right, y), staggerBlend
+      );
+
+      SEGMENT.setPixelColorXY(x, y, blended);
+    } else {
+      SEGMENT.setPixelColorXY(x, y, color);
     }
   }
+}
+  // --- Render flames End ---
 
   return FRAMETIME;
 }
 
-// Effect title and parameters string for registration
-static const char _data_FX_MODE_FIRE_2025_SR[] PROGMEM = "Fire2025 SR@Cooling,Spark rate,,,2D Blur;;!;1;";
+// --- Effect registration Start ---
+static const char _data_FX_MODE_FIRE_2025_SR[] PROGMEM =
+"Fire2025 SR@Cooling,Spark rate,Stagger Blend,,2D Blur;;!;1;";
+// --- Effect registration End ---
 
 //////////////////////////
 //     2D Firenoise     //
