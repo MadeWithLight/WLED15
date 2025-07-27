@@ -5207,8 +5207,8 @@ constexpr uint8_t CFG_EMBER_MIN = 10;  // Minimum brightness for base embers whe
 constexpr uint8_t CFG_EMBER_MAX = 20;  // Maximum brightness for base embers when audio is silent
 constexpr uint8_t CFG_DECAY_MIN = 3;  // Minimum amount by which flame energy decays each frame
 constexpr uint8_t CFG_DECAY_MAX = 5;  // Maximum amount by which flame energy decays each frame
-constexpr uint8_t CFG_MIN_FLAME_GAP = 3;  // Minimum number of columns between simultaneous base sparks
-constexpr float CFG_FADE_ZONE_START_RATIO = 0.8f;  // Fraction of height where top fading starts (0.0 = bottom, 1.0 = top)
+constexpr uint8_t CFG_MIN_FLAME_GAP = 2;  // Minimum number of columns between simultaneous base sparks
+constexpr float CFG_FADE_ZONE_START_RATIO = 0.9f;  // Fraction of height where top fading starts (0.0 = bottom, 1.0 = top)
 constexpr float CFG_FADE_FACTOR = 0.85f;  // Strength of fading at top zone (0.0 = no fade, 1.0 = full fade)
 constexpr uint8_t CFG_STAGGER_BLEND = 160;  // Blend factor for staggering rows (0 = no blend, 255 = full blend)
 constexpr uint8_t CFG_WHITE_HOT_THRESHOLD = 250;  // Energy level above which flame tips show white-hot color
@@ -5277,13 +5277,13 @@ uint16_t mode_fire_2025_sr() {
   // --- Energy transfer End ---
 
   // --- Inject base sparks Start ---
-  lastSparkX = 255;  // Reset last spark column each frame
+  lastSparkX = 200;  // Reset last spark column each frame //255
 
   for (uint8_t x = 0; x < width; x++) {
     uint8_t base = 0;
 
     // Prevent sparks closer than CFG_MIN_FLAME_GAP columns
-    bool allowSpark = (lastSparkX == 255) || (x >= lastSparkX + CFG_MIN_FLAME_GAP);
+    bool allowSpark = (lastSparkX == 200) || (x >= lastSparkX + CFG_MIN_FLAME_GAP);
     if (audioVolume > CFG_AUDIO_MIN_VOLUME && allowSpark && random8() < CFG_AUDIO_SPARK_CHANCE) {
       base = random8(CFG_SPARK_MIN, CFG_SPARK_MAX) + (uint8_t)(audioVolume * CFG_AUDIO_SPARK_VOLUME_MULT);
       base = min(base, (uint8_t)255);
