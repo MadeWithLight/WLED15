@@ -5198,17 +5198,29 @@ static const char _data_FX_MODE_FIRE_2025[] PROGMEM = "Fire 2025@Cooling,Spark r
 /////////////////////////////////////////////////////
 
 // --- Configuration Section ---
-constexpr float FADE_ZONE_START_RATIO = 0.8f;  // Start fade at 80% height (0.0 - 1.0)
-constexpr float FADE_FACTOR = 0.85f;           // Fade strength (0.0 = no fade, 1.0 = full fade)
-// -----------------------------
+constexpr float CFG_AUDIO_MIN_VOLUME = 0.02f;  // Minimum audio volume threshold to trigger big sparks
+constexpr float CFG_AUDIO_SPARK_VOLUME_MULT = 255.0f;  // Multiplier for audio volume when adding to spark brightness
+constexpr uint8_t CFG_AUDIO_SPARK_CHANCE = 120;  // Probability (0-255) that a spark will appear when audio is active
+constexpr uint8_t CFG_SPARK_MIN = 80;  // Minimum brightness for base sparks when audio active
+constexpr uint8_t CFG_SPARK_MAX = 150;  // Maximum brightness for base sparks when audio active
+constexpr uint8_t CFG_EMBER_MIN = 10;  // Minimum brightness for base embers when audio is silent
+constexpr uint8_t CFG_EMBER_MAX = 20;  // Maximum brightness for base embers when audio is silent
+constexpr uint8_t CFG_DECAY_MIN = 3;  // Minimum amount by which flame energy decays each frame
+constexpr uint8_t CFG_DECAY_MAX = 5;  // Maximum amount by which flame energy decays each frame
+constexpr uint8_t CFG_MIN_FLAME_GAP = 3;  // Minimum number of columns between simultaneous base sparks
+constexpr float CFG_FADE_ZONE_START_RATIO = 0.8f;  // Fraction of height where top fading starts (0.0 = bottom, 1.0 = top)
+constexpr float CFG_FADE_FACTOR = 0.85f;  // Strength of fading at top zone (0.0 = no fade, 1.0 = full fade)
+constexpr uint8_t CFG_STAGGER_BLEND = 160;  // Blend factor for staggering rows (0 = no blend, 255 = full blend)
+constexpr uint8_t CFG_WHITE_HOT_THRESHOLD = 250;  // Energy level above which flame tips show white-hot color
+// --- End Configuration Section ---
 
 uint16_t mode_fire_2025_sr() {
   const uint8_t width = SEGMENT.virtualWidth();
   const uint8_t height = SEGMENT.virtualHeight();
-
-  static uint8_t energy[64][64] = {};  // 2D energy grid (x, y)
-  static uint8_t next[64][64] = {};
-  static uint8_t baseMemory[64] = {};  // Smoothed base energy
+  static uint8_t energy[32][32] = {};  // 2D energy grid (x, y)
+  static uint8_t next[32][32] = {};
+  static uint8_t baseMemory[32] = {};  // Smoothed base energy
+  static uint8_t lastSparkX = 255;  // Track last spark column to enforce gap
 
   // --- Audio input Start ---
   float audioVolume = 0.0f;
@@ -5231,26 +5243,24 @@ uint16_t mode_fire_2025_sr() {
     for (uint8_t x = 0; x < width; x++) {
       uint8_t below = energy[x][y - 1];
 
-      // Add more flicker at upper levels
-      uint8_t flicker = map8(y, 32, 255);  // increases with height
-      uint8_t decay = random8(2, 6 + (flicker >> 6));
+      // Add flicker at upper levels controlled by decay min/max
+      uint8_t flicker = map8(y, 225, 255);  // increases with height
+      uint8_t decay = random8(CFG_DECAY_MIN, CFG_DECAY_MAX + (flicker >> 6));
 
       int16_t transfer = below - decay;
       if (transfer < 0) transfer = 0;
 
-      // Suggested: Apply gradual fade at top based on height using config constants
-      if (y > height * FADE_ZONE_START_RATIO) {  // Start fading in upper zone
-        float fadeMultiplier = 1.0f - (FADE_FACTOR * (float)(y - height * FADE_ZONE_START_RATIO) / (height * (1.0f - FADE_ZONE_START_RATIO)));
+      // Apply gradual fade at top based on height using config constants
+      if (y > height * CFG_FADE_ZONE_START_RATIO) {  // Start fading in upper zone
+        float fadeMultiplier = 1.0f - (CFG_FADE_FACTOR * (float)(y - height * CFG_FADE_ZONE_START_RATIO) / (height * (1.0f - CFG_FADE_ZONE_START_RATIO)));
         transfer = (int16_t)(transfer * fadeMultiplier);
         if (transfer < 0) transfer = 0;
       }
-
       next[x][y] = transfer;
 
       // --- Lateral flickering tongues with tapering Start ---
       uint8_t taper = map8(height - y, 0, 255); // more spread at bottom
       uint8_t sideEnergy = (transfer * taper) / 1024;
-
       int8_t offset = random8(3) - 1;  // -1, 0, or 1
       int8_t leftX = x - 1 + offset;
       int8_t rightX = x + 1 + offset;
@@ -5267,20 +5277,26 @@ uint16_t mode_fire_2025_sr() {
   // --- Energy transfer End ---
 
   // --- Inject base sparks Start ---
+  lastSparkX = 255;  // Reset last spark column each frame
+
   for (uint8_t x = 0; x < width; x++) {
     uint8_t base = 0;
 
-    if (audioVolume > 0.02f && random8() < 120) {
-      base = random8(80, 150) + (uint8_t)(audioVolume * 255);
+    // Prevent sparks closer than CFG_MIN_FLAME_GAP columns
+    bool allowSpark = (lastSparkX == 255) || (x >= lastSparkX + CFG_MIN_FLAME_GAP);
+    if (audioVolume > CFG_AUDIO_MIN_VOLUME && allowSpark && random8() < CFG_AUDIO_SPARK_CHANCE) {
+      base = random8(CFG_SPARK_MIN, CFG_SPARK_MAX) + (uint8_t)(audioVolume * CFG_AUDIO_SPARK_VOLUME_MULT);
       base = min(base, (uint8_t)255);
+      lastSparkX = x;
+    } else if (!allowSpark) {
+      base = 0;  // No spark if too close to last one
     } else {
-      base = random8(10, 30);  // Ember glow when silent
+      base = random8(CFG_EMBER_MIN, CFG_EMBER_MAX);  // Ember glow when silent or no spark
     }
 
     // Smooth base flicker (optional)
     base = (base + baseMemory[x]) / 2;
     baseMemory[x] = base;
-
     next[x][0] = base;
   }
   // --- Inject base sparks End ---
@@ -5294,34 +5310,29 @@ uint16_t mode_fire_2025_sr() {
   // --- Copy next to energy End ---
 
   // --- Render flames Start ---
-  uint8_t staggerBlend = 160;  // 0 = no stagger correction, 255 = full blend
-
   for (uint8_t y = 0; y < height; y++) {
     bool stagger = (y % 2 == 1);  // every other row is offset
 
     for (uint8_t x = 0; x < width; x++) {
       uint8_t e = energy[x][y];
       uint8_t brightness = scale8(e, 255);
-
       uint32_t color;
-      if (e > 250) {
+      if (e > CFG_WHITE_HOT_THRESHOLD) {
         color = RGBW32(170, 170, e, 0);  // white-hot tip
       } else if (e > 0) {
         color = SEGMENT.color_from_palette(e, false, false, 0, brightness);
       } else {
         color = RGBW32(0, 0, 0, 0); // fully off
       }
-
-      if (stagger && staggerBlend > 0) {
+      if (stagger && CFG_STAGGER_BLEND > 0) {
         uint8_t left = (x > 0) ? x - 1 : x;
         uint8_t right = (x < width - 1) ? x + 1 : x;
 
-        // blend with left/right using staggerBlend strength
+    // blend with left/right using staggerBlend strength
         uint32_t blended = color_blend(
-          color_blend(SEGMENT.getPixelColorXY(left, y), color, staggerBlend),
-          SEGMENT.getPixelColorXY(right, y), staggerBlend
+          color_blend(SEGMENT.getPixelColorXY(left, y), color, CFG_STAGGER_BLEND),
+          SEGMENT.getPixelColorXY(right, y), CFG_STAGGER_BLEND
         );
-
         SEGMENT.setPixelColorXY(x, y, blended);
       } else {
         SEGMENT.setPixelColorXY(x, y, color);
@@ -5337,7 +5348,6 @@ uint16_t mode_fire_2025_sr() {
 static const char _data_FX_MODE_FIRE_2025_SR[] PROGMEM =
 "Fire2025 SR@Cooling,Spark rate,Stagger Blend,,2D Blur;;!;1;";
 // --- Effect registration End ---
-
 
 //////////////////////////
 //     2D Firenoise     //
