@@ -5202,22 +5202,35 @@ static const char _data_FX_MODE_FIRE_2025[] PROGMEM = "Fire 2025@Cooling,Spark r
 constexpr float   CFG_AUDIO_MIN_VOLUME       = 0.02f;   // Minimum volume to trigger sparks
 constexpr float   CFG_AUDIO_SPARK_VOLUME_MULT= 255.0f;  // Scale factor for audio-driven spark energy
 constexpr uint8_t CFG_AUDIO_SPARK_CHANCE     = 120;     // Chance of creating a spark per column per frame when audio is active
-constexpr uint8_t CFG_SPARK_MIN              = 80;      // Minimum energy for a new spark
-constexpr uint8_t CFG_SPARK_MAX              = 150;     // Maximum base spark energy
+//constexpr uint8_t CFG_SPARK_MIN              = 80;      // Minimum energy for a new spark
+//constexpr uint8_t CFG_SPARK_MAX              = 150;     // Maximum base spark energy
 constexpr uint8_t CFG_EMBER_MIN              = 10;      // Minimum background ember energy
 constexpr uint8_t CFG_EMBER_MAX              = 20;      // Maximum background ember energy
 constexpr uint8_t CFG_DECAY_MIN              = 3;       // Minimum decay per step
 constexpr uint8_t CFG_DECAY_MAX              = 5;       // Maximum decay per step
-constexpr uint8_t CFG_MIN_FLAME_GAP          = 2;       // Minimum gap between active flame tongues
+//constexpr uint8_t CFG_MIN_FLAME_GAP          = 3;       // Minimum number of columns between simultaneous base sparks
 constexpr float   CFG_FADE_ZONE_START_RATIO  = 0.9f;    // Percentage height at which fading begins
 constexpr float   CFG_FADE_FACTOR            = 0.85f;   // How aggressively to fade flames near the top
 constexpr uint8_t CFG_STAGGER_BLEND          = 160;     // Blend factor for staggered row smoothing
-constexpr uint8_t CFG_WHITE_HOT_THRESHOLD    = 250;     // Energy above this draws white-hot tips
+constexpr uint8_t CFG_WHITE_HOT_THRESHOLD    = 230;     // Energy above this draws white-hot tips
 // --- End Configuration Section ---
 
 uint16_t mode_fire_2025_sr() {
+  if (!strip.isMatrix || !SEGMENT.is2D()) return mode_pride_2015(); // not a 2D set-up
   const uint8_t width = SEGMENT.virtualWidth();
   const uint8_t height = SEGMENT.virtualHeight();
+
+  // Sliders Setup START
+  uint8_t CFG_MIN_FLAME_GAP = map(SEGMENT.intensity, 0, 255, 1, 6);  // Slider 1: Min Flame Gap value (0–255) and map to gap 1–6
+  // Serial.print(F("Flame Gap: "));
+  // Serial.println(CFG_MIN_FLAME_GAP);
+  uint8_t CFG_SPARK_MIN = SEGMENT.custom1;                            // Slider 2: Minimum energy for a new spark
+  // Serial.print(F("Minimum energy for a new spark: "));
+  // Serial.println(CFG_SPARK_MIN);
+  uint8_t CFG_SPARK_MAX = SEGMENT.custom2;                            // Slider 3: Maximum base spark energy
+  // Serial.print(F("Maximum base spark energy: "));
+  // Serial.println(CFG_SPARK_MAX);
+  // Sliders Setup END
 
   // 2D energy grid (current and next frame)
   static uint8_t energy[32][32] = {};
@@ -5346,11 +5359,9 @@ uint16_t mode_fire_2025_sr() {
   return FRAMETIME;
 }
 
-// --- Effect registration string ---
-static const char _data_FX_MODE_FIRE_2025_SR[] PROGMEM =
-"Fire2025 SR@Cooling,Spark rate,Stagger Blend,,2D Blur;;!;1;";
-
-// --- Effect registration End ---
+// --- Effect Registration Start ---
+static const char _data_FX_MODE_FIRE_2025_SR[] PROGMEM = "Fire2025 SR@,Flame Gap,Minimum energy,Maximum Energy;;!;1;";
+// --- Effect Registration End ---
 
 //////////////////////////
 //     2D Firenoise     //
