@@ -5095,7 +5095,8 @@ uint16_t mode_fire_2025(void) {
 
   auto getPixelIndex = [&](uint8_t x, uint8_t y) -> uint16_t {
     if (y >= height || x >= width) return 0;
-    return y % 2 == 0 ? y * width + x : y * width + (width - 1 - x);
+    // Serpentine mapping: even rows left->right, odd rows right->left
+    return (y % 2 == 0) ? (y * width + x) : (y * width + (width - 1 - x));
   };
 
   auto reduce = [](byte &b, byte amt, byte min = 0) {
@@ -5110,24 +5111,24 @@ uint16_t mode_fire_2025(void) {
     return min + (rand() % (max - min + 1));
   };
 
-  // Base flame injection at bottom row
+  // Base flame injection at bottom row (y = height-1)
   for (uint8_t x = 0; x < width; x++) {
-    uint16_t i = getPixelIndex(x, 0);
+    uint16_t i = getPixelIndex(x, height - 1);
     currentEnergy[i] = random8(flame_min, flame_max);
     energyMode[i] = torch_nop;
   }
 
-  // Random spark injection at second row
+  // Random spark injection at second from bottom row (y = height-2)
   for (uint8_t x = 0; x < width; x++) {
-    uint16_t i = getPixelIndex(x, 1);
+    uint16_t i = getPixelIndex(x, height - 2);
     if (energyMode[i] != torch_spark && random8(0, 100) < random_spark_probability) {
       currentEnergy[i] = random8(spark_min, spark_max);
       energyMode[i] = torch_spark;
     }
   }
 
-  // Energy propagation loop
-  for (uint8_t y = 0; y < height; y++) {
+  // Energy propagation loop - from bottom-2 row up to top row
+  for (int y = height - 2; y >= 0; y--) {
     for (uint8_t x = 0; x < width; x++) {
       uint16_t i = getPixelIndex(x, y);
       byte e = currentEnergy[i];
@@ -5136,12 +5137,12 @@ uint16_t mode_fire_2025(void) {
       switch (m) {
         case torch_spark:
           reduce(e, spark_tfr);
-          if (y < height - 1) energyMode[getPixelIndex(x, y + 1)] = torch_spark_temp;
+          if (y > 0) energyMode[getPixelIndex(x, y - 1)] = torch_spark_temp; // propagate spark upward (y-1)
           break;
 
         case torch_spark_temp: {
-          if (y == 0) break;
-          uint16_t below = getPixelIndex(x, y - 1);
+          if (y == height - 1) break;
+          uint16_t below = getPixelIndex(x, y + 1); // below is y+1 (down in native coords)
           byte e2 = currentEnergy[below];
           if (e2 < spark_tfr) {
             energyMode[below] = torch_passive;
@@ -5157,7 +5158,7 @@ uint16_t mode_fire_2025(void) {
         case torch_passive: {
           byte leftE = (x > 0) ? currentEnergy[getPixelIndex(x - 1, y)] : 0;
           byte rightE = (x < width - 1) ? currentEnergy[getPixelIndex(x + 1, y)] : 0;
-          byte upE = (y < height - 1) ? currentEnergy[getPixelIndex(x, y + 1)] : 0;
+          byte upE = (y > 0) ? currentEnergy[getPixelIndex(x, y - 1)] : 0; // up is y-1
           e = ((int)e * heat_cap) >> 8;
           e += (((int)leftE + rightE) * side_rad) >> 9;
           e += ((int)upE * up_rad) >> 8;
@@ -5168,7 +5169,7 @@ uint16_t mode_fire_2025(void) {
     }
   }
 
-  // Color mapping
+  // Color mapping and output to LEDs
   for (uint8_t y = 0; y < height; y++) {
     for (uint8_t x = 0; x < width; x++) {
       uint16_t i = getPixelIndex(x, y);
@@ -5191,6 +5192,7 @@ uint16_t mode_fire_2025(void) {
 }
 
 static const char _data_FX_MODE_FIRE_2025[] PROGMEM = "Fire 2025@Cooling,Spark rate,,,2D Blur;;!;1;";
+
 
 /////////////////////////////////////////////////////
 // Fire2025 SR by MadeWithLight                    //
