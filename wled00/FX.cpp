@@ -5203,44 +5203,52 @@ static const char _data_FX_MODE_FIRE_2025[] PROGMEM = "Fire 2025@Cooling,Spark r
 constexpr float   CFG_AUDIO_MIN_VOLUME       = 0.02f;   // Minimum volume to trigger sparks
 constexpr float   CFG_AUDIO_SPARK_VOLUME_MULT= 255.0f;  // Scale factor for audio-driven spark energy
 constexpr uint8_t CFG_AUDIO_SPARK_CHANCE     = 120;     // Chance of creating a spark per column per frame when audio is active
+constexpr uint8_t CFG_SPARK_MIN              = 80;      // Minimum energy for a new spark
+constexpr uint8_t CFG_SPARK_MAX              = 150;     // Maximum base spark energy
 constexpr uint8_t CFG_EMBER_MIN              = 10;      // Minimum background ember energy
 constexpr uint8_t CFG_EMBER_MAX              = 20;      // Maximum background ember energy
 constexpr uint8_t CFG_DECAY_MIN              = 3;       // Minimum decay per step
 constexpr uint8_t CFG_DECAY_MAX              = 5;       // Maximum decay per step
+constexpr uint8_t CFG_MIN_FLAME_GAP          = 2;       // Minimum number of columns between simultaneous base sparks
 constexpr float   CFG_FADE_ZONE_START_RATIO  = 0.9f;    // Percentage height at which fading begins
-constexpr float   CFG_FADE_FACTOR            = 0.85f;   // How aggressively to fade flames near the top
-constexpr uint8_t CFG_STAGGER_BLEND          = 160;     // Blend factor for staggered row smoothing
+constexpr float   CFG_FADE_FACTOR            = 0.70f;   // How aggressively to fade flames near the top
 constexpr uint8_t CFG_WHITE_HOT_THRESHOLD    = 230;     // Energy above this draws white-hot tips
+constexpr uint8_t CFG_WIND_INTERVAL          = 60;       // Frames between possible wind direction changes
+constexpr uint8_t CFG_WIND_SWITCH_CHANCE     = 5;      // % chance to flip wind direction each interval
+constexpr uint8_t CFG_WIND_MAX_STRENGTH      = 3;       // max pixels shifted per frame
 
 // Max supported matrix size for buffer arrays
-constexpr uint8_t MAX_WIDTH  = 120;  // Adjust as needed for max expected width
-constexpr uint8_t MAX_HEIGHT = 64;   // Adjust as needed for max expected height
+constexpr uint8_t MAX_WIDTH  = 32;  // Adjust as needed for max expected width
+constexpr uint8_t MAX_HEIGHT = 128; // Adjust as needed for max expected height
 
+// The Fire2025 SR effect main function
 uint16_t mode_fire_2025_sr() {
-  if (!strip.isMatrix || !SEGMENT.is2D()) return mode_pride_2015(); // Not a 2D setup
+  // Check if this segment is a 2D matrix; fallback if not
+  if (!strip.isMatrix || !SEGMENT.is2D()) return mode_pride_2015();
 
+  // Get virtual dimensions of the matrix segment
   const uint8_t width = SEGMENT.virtualWidth();
   const uint8_t height = SEGMENT.virtualHeight();
 
-  // Sanity clamp to max buffer size
+  // Clamp to buffer max size to prevent overflow
   const uint8_t bufWidth = (width > MAX_WIDTH) ? MAX_WIDTH : width;
   const uint8_t bufHeight = (height > MAX_HEIGHT) ? MAX_HEIGHT : height;
 
-  // Sliders Setup START
-  uint8_t CFG_MIN_FLAME_GAP = map(SEGMENT.intensity, 0, 255, 1, 6);  // Slider 1: Min Flame Gap value (0–255) and map to gap 1–6
-  uint8_t CFG_SPARK_MIN = SEGMENT.custom1;                           // Slider 2: Minimum energy for a new spark
-  uint8_t CFG_SPARK_MAX = SEGMENT.custom2;                           // Slider 3: Maximum base spark energy
+  // Sliders Setup START - parameters adjustable via UI sliders if used
+  // uint8_t CFG_MIN_FLAME_GAP = map(SEGMENT.intensity, 0, 255, 1, 6);  // Map intensity slider to min flame gap (1 to 6)
+  // uint8_t CFG_SPARK_MIN = SEGMENT.custom1;                           // Min spark energy slider
+  // uint8_t CFG_SPARK_MAX = SEGMENT.custom2;                           // Max spark energy slider
   // Sliders Setup END
 
-  // Static 2D buffers sized to max possible, we only use [bufWidth][bufHeight]
+  // Static 2D buffers sized to max possible; only use [bufWidth][bufHeight]
   static uint8_t energy[MAX_WIDTH][MAX_HEIGHT] = {};
   static uint8_t next[MAX_WIDTH][MAX_HEIGHT] = {};
 
-  // Base spark memory per column for smoothing
+  // Base spark memory per column to smooth base energy transitions
   static uint8_t baseMemory[MAX_WIDTH] = {};
-  static uint8_t lastSparkX = 255;
+  static uint8_t lastSparkX = 255; // To enforce minimum gap between sparks
 
-  // Get audio input safely
+  // Get audio input volume safely from WLED audio system
   float audioVolume = 0.0f;
   um_data_t* audioData = getAudioData();
   if (audioData && audioData->u_size > 0 && audioData->u_data[0] != nullptr) {
@@ -5250,26 +5258,25 @@ uint16_t mode_fire_2025_sr() {
     audioVolume = rawAudio;
   }
 
-  // Clear next frame buffer
+  // Clear the 'next' buffer for this frame
   for (uint8_t x = 0; x < bufWidth; x++) {
     for (uint8_t y = 0; y < bufHeight; y++) {
       next[x][y] = 0;
     }
   }
 
-  // Energy transfer and upward diffusion
+  // Energy transfer and upward diffusion for the flames
   for (uint8_t y = 1; y < bufHeight; y++) {
     for (uint8_t x = 0; x < bufWidth; x++) {
       uint8_t below = energy[x][y - 1];
-
-      // Flicker decay scaling with height
+  
+      // Flicker decay scaling with height (adds natural flame flicker)
       uint8_t flicker = map8(y, 225, 255);
       uint8_t decay = random8(CFG_DECAY_MIN, CFG_DECAY_MAX + (flicker >> 6));
-
       int16_t transfer = below - decay;
       if (transfer < 0) transfer = 0;
 
-      // Apply fade near top of flame
+      // Apply fade near top of flame to taper brightness
       if (y > bufHeight * CFG_FADE_ZONE_START_RATIO) {
         float fadeMultiplier = 1.0f - (CFG_FADE_FACTOR *
           (float)(y - bufHeight * CFG_FADE_ZONE_START_RATIO) /
@@ -5280,10 +5287,10 @@ uint16_t mode_fire_2025_sr() {
 
       next[x][y] = transfer;
 
-      // Lateral diffusion for flame tongues
+      // Lateral diffusion for flame tongues to simulate flame spread and tongue flicker
       uint8_t taper = map8(bufHeight - y, 0, 255);
-      uint8_t sideEnergy = (transfer * taper) / 1024;
-      int8_t offset = random8(3) - 1;  // horizontal wiggle
+      uint8_t sideEnergy = (transfer * taper) / 1024;  // Small fraction of energy diffuses sideways
+      int8_t offset = random8(3) - 1;  // Horizontal wiggle offset (-1, 0, or 1)
       int8_t leftX = x - 1 + offset;
       int8_t rightX = x + 1 + offset;
 
@@ -5292,71 +5299,106 @@ uint16_t mode_fire_2025_sr() {
     }
   }
 
-  // Inject base sparks at y=0
+  // Inject base sparks at bottom row (y=0)
   lastSparkX = 200; // Reset to allow first spark anywhere
   for (uint8_t x = 0; x < bufWidth; x++) {
     uint8_t base = 0;
     bool allowSpark = (lastSparkX == 200) || (x >= lastSparkX + CFG_MIN_FLAME_GAP);
+
     if (audioVolume > CFG_AUDIO_MIN_VOLUME && allowSpark && random8() < CFG_AUDIO_SPARK_CHANCE) {
+      // Create new spark based on audio level and spark energy range
       base = random8(CFG_SPARK_MIN, CFG_SPARK_MAX) + (uint8_t)(audioVolume * CFG_AUDIO_SPARK_VOLUME_MULT);
       base = min(base, (uint8_t)255);
       lastSparkX = x;
     } else if (!allowSpark) {
       base = 0;
     } else {
+      // Background embers when no spark is created
       base = random8(CFG_EMBER_MIN, CFG_EMBER_MAX);
     }
 
-    base = (base + baseMemory[x]) / 2; // smooth base energy
+    // Smooth base energy with memory to avoid abrupt changes
+    base = (base + baseMemory[x]) / 2;
     baseMemory[x] = base;
     next[x][0] = base;
   }
 
-  // Swap buffers (copy next to energy)
+    // Wind update frequency and chance to flip direction depends on bass intensity
+static int8_t windDirection = 1;   // 1 = right, -1 = left
+static uint8_t windTimer = 0;
+
+if (++windTimer >= CFG_WIND_INTERVAL) {
+  windTimer = 0;
+
+  // Make chance of switching direction proportional to bass
+  // Scale base chance by bass level; minimum chance to flip is 10%
+  uint8_t bassSwitchChance = (uint8_t)(CFG_WIND_SWITCH_CHANCE * audioVolume);
+  bassSwitchChance = max(bassSwitchChance, (uint8_t)10);
+
+  if (random8(100) < bassSwitchChance) {
+    windDirection = -windDirection; // Flip wind direction influenced by bass
+  }
+}
+
+// Wind strength scales linearly with bass level
+uint8_t windStrength = (uint8_t)(audioVolume * CFG_WIND_MAX_STRENGTH);
+if (windStrength > CFG_WIND_MAX_STRENGTH) windStrength = CFG_WIND_MAX_STRENGTH;
+
+// Shift energy buffer horizontally by windStrength pixels based on wind direction to simulate flame sway
+if (windStrength > 0) {
+  for (uint8_t y = 0; y < bufHeight; y++) {
+    if (windDirection > 0) {
+      // Shift right by windStrength pixels
+      for (int x = bufWidth - 1; x >= (int)windStrength; x--) {
+        energy[x][y] = energy[x - windStrength][y];
+      }
+      for (uint8_t x = 0; x < windStrength; x++) energy[x][y] = 0;
+    } else {
+      // Shift left by windStrength pixels
+      for (uint8_t x = 0; x < bufWidth - windStrength; x++) {
+        energy[x][y] = energy[x + windStrength][y];
+      }
+      for (uint8_t x = bufWidth - windStrength; x < bufWidth; x++) energy[x][y] = 0;
+    }
+  }
+}
+
+  // Swap buffers: copy next frame energy into current energy buffer
   for (uint8_t x = 0; x < bufWidth; x++) {
     for (uint8_t y = 0; y < bufHeight; y++) {
       energy[x][y] = next[x][y];
     }
   }
 
-  // Render to LED matrix
+  // Render energy values to LED matrix
   for (uint8_t y = 0; y < height; y++) {
-    uint8_t renderY = height - 1 - y;
-    bool stagger = (y % 2 == 1);
+    uint8_t renderY = height - 1 - y; // Flip vertical coordinate (bottom-left origin)
 
     for (uint8_t x = 0; x < width; x++) {
       uint8_t e = (x < bufWidth && y < bufHeight) ? energy[x][y] : 0;
       uint8_t brightness = scale8(e, 255);
       uint32_t color;
 
+      // White-hot tips for high energy sparks
       if (e > CFG_WHITE_HOT_THRESHOLD) {
         color = RGBW32(255, 200, e, 0);
       } else if (e > 0) {
+        // Use palette color scaled by brightness
         color = SEGMENT.color_from_palette(e, false, false, 0, brightness);
       } else {
-        color = RGBW32(0, 0, 0, 0);
+        color = RGBW32(0, 0, 0, 0); // Off pixel
       }
 
-      if (stagger && CFG_STAGGER_BLEND > 0) {
-        uint8_t left = (x > 0) ? x - 1 : x;
-        uint8_t right = (x < width - 1) ? x + 1 : x;
-        uint32_t blended = color_blend(
-          color_blend(SEGMENT.getPixelColorXY(left, renderY), color, CFG_STAGGER_BLEND),
-          SEGMENT.getPixelColorXY(right, renderY), CFG_STAGGER_BLEND
-        );
-        SEGMENT.setPixelColorXY(x, renderY, blended);
-      } else {
-        SEGMENT.setPixelColorXY(x, renderY, color);
-      }
+      SEGMENT.setPixelColorXY(x, renderY, color);
     }
   }
 
   return FRAMETIME;
 }
 
-// --- Effect Registration Start ---
-static const char _data_FX_MODE_FIRE_2025_SR[] PROGMEM = "Fire2025 SR@,Flame Gap,Minimum energy,Maximum Energy;;!;1;";
-// --- Effect Registration End ---
+// --- Effect Registration ---
+static const char _data_FX_MODE_FIRE_2025_SR[] PROGMEM = "Fire2025 SR@,,,;;!;1;";
+
 
 //////////////////////////
 //     2D Firenoise     //
