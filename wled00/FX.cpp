@@ -5227,9 +5227,9 @@ uint16_t mode_fire_2025_sr() {
   const uint8_t bufHeight = (height > MAX_HEIGHT) ? MAX_HEIGHT : height;
 
   // Sliders Setup START
-  uint8_t CFG_MIN_FLAME_GAP = map(SEGMENT.intensity, 0, 255, 1, 6);  // Slider 1: Min Flame Gap value (0–255) mapped to 1–6
-  uint8_t CFG_SPARK_MIN = SEGMENT.custom1;                            // Slider 2: Minimum energy for a new spark
-  uint8_t CFG_SPARK_MAX = SEGMENT.custom2;                            // Slider 3: Maximum base spark energy
+  uint8_t CFG_MIN_FLAME_GAP = map(SEGMENT.intensity, 0, 255, 1, 6);  // Slider 1: Min Flame Gap value (0–255) and map to gap 1–6
+  uint8_t CFG_SPARK_MIN = SEGMENT.custom1;                           // Slider 2: Minimum energy for a new spark
+  uint8_t CFG_SPARK_MAX = SEGMENT.custom2;                           // Slider 3: Maximum base spark energy
   // Sliders Setup END
 
   // Static 2D buffers sized to max possible, we only use [bufWidth][bufHeight]
