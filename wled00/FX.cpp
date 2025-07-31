@@ -5086,7 +5086,7 @@ uint16_t mode_fire_2025(void) {
   uint16_t spark_cap = 220;           // Sparks energy retention multiplier when interacting with passive energy
   uint16_t up_rad = 80;               // Energy transferred upward (pushes flames taller)
   uint16_t side_rad = 45;             // Energy transferred sideways (controls flame width/spread)
-  uint16_t heat_cap = 30;              // Old energy retention (0 means no retention, higher slows cooldown)
+  uint16_t heat_cap = 30;             // Old energy retention (0 means no retention, higher slows cooldown)
 
   const uint8_t energymap[32] = {
     0,64,96,112,128,144,152,160,168,176,184,184,192,200,200,208,
@@ -5335,7 +5335,7 @@ uint16_t mode_fire_2025_sr() {
 
       // White-hot core for very high energy
       if (e > CFG_WHITE_HOT_THRESHOLD) {
-        color = RGBW32(170, 170, e, 0);
+        color = RGBW32(255, 200, e, 0);
       } else if (e > 0) {
         // Use WLED palette for flame colors
         color = SEGMENT.color_from_palette(e, false, false, 0, brightness);
