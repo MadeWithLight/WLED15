@@ -5193,7 +5193,6 @@ uint16_t mode_fire_2025(void) {
 
 static const char _data_FX_MODE_FIRE_2025[] PROGMEM = "Fire 2025@Cooling,Spark rate,,,2D Blur;;!;1;";
 
-
 /////////////////////////////////////////////////////
 // Fire2025 SR by MadeWithLight                    //
 // YouTube: https://www.youtube.com/@MadeWithLight //
@@ -5204,146 +5203,140 @@ static const char _data_FX_MODE_FIRE_2025[] PROGMEM = "Fire 2025@Cooling,Spark r
 constexpr float   CFG_AUDIO_MIN_VOLUME       = 0.02f;   // Minimum volume to trigger sparks
 constexpr float   CFG_AUDIO_SPARK_VOLUME_MULT= 255.0f;  // Scale factor for audio-driven spark energy
 constexpr uint8_t CFG_AUDIO_SPARK_CHANCE     = 120;     // Chance of creating a spark per column per frame when audio is active
-//constexpr uint8_t CFG_SPARK_MIN              = 80;      // Minimum energy for a new spark
-//constexpr uint8_t CFG_SPARK_MAX              = 150;     // Maximum base spark energy
 constexpr uint8_t CFG_EMBER_MIN              = 10;      // Minimum background ember energy
 constexpr uint8_t CFG_EMBER_MAX              = 20;      // Maximum background ember energy
 constexpr uint8_t CFG_DECAY_MIN              = 3;       // Minimum decay per step
 constexpr uint8_t CFG_DECAY_MAX              = 5;       // Maximum decay per step
-//constexpr uint8_t CFG_MIN_FLAME_GAP          = 3;       // Minimum number of columns between simultaneous base sparks
 constexpr float   CFG_FADE_ZONE_START_RATIO  = 0.9f;    // Percentage height at which fading begins
 constexpr float   CFG_FADE_FACTOR            = 0.85f;   // How aggressively to fade flames near the top
 constexpr uint8_t CFG_STAGGER_BLEND          = 160;     // Blend factor for staggered row smoothing
 constexpr uint8_t CFG_WHITE_HOT_THRESHOLD    = 230;     // Energy above this draws white-hot tips
-// --- End Configuration Section ---
+
+// Max supported matrix size for buffer arrays
+constexpr uint8_t MAX_WIDTH  = 120;  // Adjust as needed for max expected width
+constexpr uint8_t MAX_HEIGHT = 64;   // Adjust as needed for max expected height
 
 uint16_t mode_fire_2025_sr() {
-  if (!strip.isMatrix || !SEGMENT.is2D()) return mode_pride_2015(); // not a 2D set-up
+  if (!strip.isMatrix || !SEGMENT.is2D()) return mode_pride_2015(); // Not a 2D setup
+
   const uint8_t width = SEGMENT.virtualWidth();
   const uint8_t height = SEGMENT.virtualHeight();
 
+  // Sanity clamp to max buffer size
+  const uint8_t bufWidth = (width > MAX_WIDTH) ? MAX_WIDTH : width;
+  const uint8_t bufHeight = (height > MAX_HEIGHT) ? MAX_HEIGHT : height;
+
   // Sliders Setup START
-  uint8_t CFG_MIN_FLAME_GAP = map(SEGMENT.intensity, 0, 255, 1, 6);  // Slider 1: Min Flame Gap value (0–255) and map to gap 1–6
-  // Serial.print(F("Flame Gap: "));
-  // Serial.println(CFG_MIN_FLAME_GAP);
+  uint8_t CFG_MIN_FLAME_GAP = map(SEGMENT.intensity, 0, 255, 1, 6);  // Slider 1: Min Flame Gap value (0–255) mapped to 1–6
   uint8_t CFG_SPARK_MIN = SEGMENT.custom1;                            // Slider 2: Minimum energy for a new spark
-  // Serial.print(F("Minimum energy for a new spark: "));
-  // Serial.println(CFG_SPARK_MIN);
   uint8_t CFG_SPARK_MAX = SEGMENT.custom2;                            // Slider 3: Maximum base spark energy
-  // Serial.print(F("Maximum base spark energy: "));
-  // Serial.println(CFG_SPARK_MAX);
   // Sliders Setup END
 
-  // 2D energy grid (current and next frame)
-  static uint8_t energy[32][32] = {};
-  static uint8_t next[32][32] = {};
+  // Static 2D buffers sized to max possible, we only use [bufWidth][bufHeight]
+  static uint8_t energy[MAX_WIDTH][MAX_HEIGHT] = {};
+  static uint8_t next[MAX_WIDTH][MAX_HEIGHT] = {};
 
   // Base spark memory per column for smoothing
-  static uint8_t baseMemory[32] = {};
+  static uint8_t baseMemory[MAX_WIDTH] = {};
   static uint8_t lastSparkX = 255;
 
-  // --- Get audio input ---
+  // Get audio input safely
   float audioVolume = 0.0f;
   um_data_t* audioData = getAudioData();
   if (audioData && audioData->u_size > 0 && audioData->u_data[0] != nullptr) {
-    audioVolume = *(float*)(audioData->u_data[0]);
+    float rawAudio = *(float*)(audioData->u_data[0]);
+    if (isnan(rawAudio) || rawAudio < 0.0f) rawAudio = 0.0f;
+    if (rawAudio > 1.0f) rawAudio = 1.0f;
+    audioVolume = rawAudio;
   }
 
-  // --- Clear next frame buffer ---
-  for (uint8_t x = 0; x < width; x++) {
-    for (uint8_t y = 0; y < height; y++) {
+  // Clear next frame buffer
+  for (uint8_t x = 0; x < bufWidth; x++) {
+    for (uint8_t y = 0; y < bufHeight; y++) {
       next[x][y] = 0;
     }
   }
 
-  // --- Energy transfer and upward diffusion ---
-  for (uint8_t y = 1; y < height; y++) {
-    for (uint8_t x = 0; x < width; x++) {
-      // Energy from the cell below
+  // Energy transfer and upward diffusion
+  for (uint8_t y = 1; y < bufHeight; y++) {
+    for (uint8_t x = 0; x < bufWidth; x++) {
       uint8_t below = energy[x][y - 1];
 
-      // Random decay per step for flicker
+      // Flicker decay scaling with height
       uint8_t flicker = map8(y, 225, 255);
       uint8_t decay = random8(CFG_DECAY_MIN, CFG_DECAY_MAX + (flicker >> 6));
 
       int16_t transfer = below - decay;
       if (transfer < 0) transfer = 0;
 
-      // Apply top fade zone to make flames taper off naturally
-      if (y > height * CFG_FADE_ZONE_START_RATIO) {
+      // Apply fade near top of flame
+      if (y > bufHeight * CFG_FADE_ZONE_START_RATIO) {
         float fadeMultiplier = 1.0f - (CFG_FADE_FACTOR *
-          (float)(y - height * CFG_FADE_ZONE_START_RATIO) /
-          (height * (1.0f - CFG_FADE_ZONE_START_RATIO)));
+          (float)(y - bufHeight * CFG_FADE_ZONE_START_RATIO) /
+          (bufHeight * (1.0f - CFG_FADE_ZONE_START_RATIO)));
         transfer = (int16_t)(transfer * fadeMultiplier);
         if (transfer < 0) transfer = 0;
       }
+
       next[x][y] = transfer;
 
-      // Lateral diffusion to create natural flame tongues
-      uint8_t taper = map8(height - y, 0, 255);
+      // Lateral diffusion for flame tongues
+      uint8_t taper = map8(bufHeight - y, 0, 255);
       uint8_t sideEnergy = (transfer * taper) / 1024;
-      int8_t offset = random8(3) - 1;  // small horizontal wiggle
+      int8_t offset = random8(3) - 1;  // horizontal wiggle
       int8_t leftX = x - 1 + offset;
       int8_t rightX = x + 1 + offset;
 
-      if (leftX >= 0 && leftX < width) next[leftX][y] = max(next[leftX][y], (uint8_t)sideEnergy);
-      if (rightX >= 0 && rightX < width) next[rightX][y] = max(next[rightX][y], (uint8_t)sideEnergy);
+      if (leftX >= 0 && leftX < bufWidth) next[leftX][y] = max(next[leftX][y], (uint8_t)sideEnergy);
+      if (rightX >= 0 && rightX < bufWidth) next[rightX][y] = max(next[rightX][y], (uint8_t)sideEnergy);
     }
   }
 
-  // --- Inject base sparks at y=0 ---
+  // Inject base sparks at y=0
   lastSparkX = 200; // Reset to allow first spark anywhere
-  for (uint8_t x = 0; x < width; x++) {
+  for (uint8_t x = 0; x < bufWidth; x++) {
     uint8_t base = 0;
     bool allowSpark = (lastSparkX == 200) || (x >= lastSparkX + CFG_MIN_FLAME_GAP);
-
     if (audioVolume > CFG_AUDIO_MIN_VOLUME && allowSpark && random8() < CFG_AUDIO_SPARK_CHANCE) {
-      // Strong spark based on audio volume
       base = random8(CFG_SPARK_MIN, CFG_SPARK_MAX) + (uint8_t)(audioVolume * CFG_AUDIO_SPARK_VOLUME_MULT);
       base = min(base, (uint8_t)255);
       lastSparkX = x;
     } else if (!allowSpark) {
       base = 0;
     } else {
-      // Weak ambient ember when no audio spark
       base = random8(CFG_EMBER_MIN, CFG_EMBER_MAX);
     }
 
-    // Smooth base energy using previous frame memory
-    base = (base + baseMemory[x]) / 2;
+    base = (base + baseMemory[x]) / 2; // smooth base energy
     baseMemory[x] = base;
-
-    next[x][0] = base; // Inject at bottom row
+    next[x][0] = base;
   }
 
-  // --- Swap buffers (copy next to current) ---
-  for (uint8_t x = 0; x < width; x++) {
-    for (uint8_t y = 0; y < height; y++) {
+  // Swap buffers (copy next to energy)
+  for (uint8_t x = 0; x < bufWidth; x++) {
+    for (uint8_t y = 0; y < bufHeight; y++) {
       energy[x][y] = next[x][y];
     }
   }
 
-  // --- Render flames to LED matrix ---
+  // Render to LED matrix
   for (uint8_t y = 0; y < height; y++) {
     uint8_t renderY = height - 1 - y;
-    bool stagger = (y % 2 == 1);            // Apply staggering on every other row
+    bool stagger = (y % 2 == 1);
 
     for (uint8_t x = 0; x < width; x++) {
-      uint8_t e = energy[x][y];
+      uint8_t e = (x < bufWidth && y < bufHeight) ? energy[x][y] : 0;
       uint8_t brightness = scale8(e, 255);
       uint32_t color;
 
-      // White-hot core for very high energy
       if (e > CFG_WHITE_HOT_THRESHOLD) {
         color = RGBW32(255, 200, e, 0);
       } else if (e > 0) {
-        // Use WLED palette for flame colors
         color = SEGMENT.color_from_palette(e, false, false, 0, brightness);
       } else {
         color = RGBW32(0, 0, 0, 0);
       }
 
-      // Apply staggered row blending for smoother tongues
       if (stagger && CFG_STAGGER_BLEND > 0) {
         uint8_t left = (x > 0) ? x - 1 : x;
         uint8_t right = (x < width - 1) ? x + 1 : x;
