@@ -5213,8 +5213,8 @@ constexpr uint8_t CFG_MIN_FLAME_GAP          = 2;       // Minimum number of col
 constexpr float   CFG_FADE_ZONE_START_RATIO  = 0.9f;    // Percentage height at which fading begins
 constexpr float   CFG_FADE_FACTOR            = 0.70f;   // How aggressively to fade flames near the top
 constexpr uint8_t CFG_WHITE_HOT_THRESHOLD    = 230;     // Energy above this draws white-hot tips
-constexpr uint8_t CFG_WIND_INTERVAL          = 60;       // Frames between possible wind direction changes
-constexpr uint8_t CFG_WIND_SWITCH_CHANCE     = 5;      // % chance to flip wind direction each interval
+constexpr uint8_t CFG_WIND_INTERVAL          = 40;      // Frames between possible wind direction changes
+constexpr uint8_t CFG_WIND_SWITCH_CHANCE     = 12;      // % chance to flip wind direction each interval
 constexpr uint8_t CFG_WIND_MAX_STRENGTH      = 3;       // max pixels shifted per frame
 
 // Max supported matrix size for buffer arrays
@@ -5271,7 +5271,8 @@ uint16_t mode_fire_2025_sr() {
       uint8_t below = energy[x][y - 1];
   
       // Flicker decay scaling with height (adds natural flame flicker)
-      uint8_t flicker = map8(y, 225, 255);
+      //uint8_t flicker = map8(y, 225, 255); // Top of Matrix Only
+      uint8_t flicker = map8(y, 0, bufHeight - 1); // Whole Matrix Height
       uint8_t decay = random8(CFG_DECAY_MIN, CFG_DECAY_MAX + (flicker >> 6));
       int16_t transfer = below - decay;
       if (transfer < 0) transfer = 0;
